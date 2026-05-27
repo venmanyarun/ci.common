@@ -47,6 +47,11 @@ public class JavaCompilerOptions {
     private String encoding;
 
     /**
+     * Annotation processor path
+     */
+    private String annotationProcessorPath;
+
+    /**
      * Get list of options that can be passed to the compiler.
      * Options with values are represented as multiple strings in the list
      *  e.g. "-source" and "1.8"
@@ -62,6 +67,7 @@ public class JavaCompilerOptions {
         addStringOption(options, "-target", target);
         addStringOption(options, "--release", release);
         addStringOption(options, "-encoding", encoding);
+        addStringOption(options, "-processorpath", annotationProcessorPath);
         return options;
     }
 
@@ -110,6 +116,14 @@ public class JavaCompilerOptions {
 
     public void setEncoding(String encoding) {
         this.encoding = encoding;
+    }
+
+    public String getAnnotationProcessorPath() {
+        return annotationProcessorPath;
+    }
+
+    public void setAnnotationProcessorPath(String annotationProcessorPath) {
+        this.annotationProcessorPath = annotationProcessorPath;
     }
 
 }
