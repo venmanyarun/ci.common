@@ -103,4 +103,56 @@ public class JavaCompilerOptionsTest {
         assertTrue(result.get(2).equals("UTF-8"));
     }
 
+    @Test
+    public void testAnnotationProcessorPath() throws Exception {
+        JavaCompilerOptions jco = new JavaCompilerOptions();
+        jco.setAnnotationProcessorPath("/path/to/lombok.jar:/path/to/mapstruct.jar");
+
+        List<String> result = jco.getOptions();
+        assertEquals(3, result.size());
+        assertTrue(result.get(0).equals("-nowarn"));
+        assertTrue(result.get(1).equals("-processorpath"));
+        assertTrue(result.get(2).equals("/path/to/lombok.jar:/path/to/mapstruct.jar"));
+    }
+
+    @Test
+    public void testAnnotationProcessorPathWithOtherOptions() throws Exception {
+        JavaCompilerOptions jco = new JavaCompilerOptions();
+        jco.setRelease("17");
+        jco.setEncoding("UTF-8");
+        jco.setAnnotationProcessorPath("/path/to/lombok.jar");
+
+        List<String> result = jco.getOptions();
+        assertEquals(7, result.size());
+        int i = 0;
+        assertTrue(result.get(i++).equals("-nowarn"));
+        assertTrue(result.get(i++).equals("--release"));
+        assertTrue(result.get(i++).equals("17"));
+        assertTrue(result.get(i++).equals("-encoding"));
+        assertTrue(result.get(i++).equals("UTF-8"));
+        assertTrue(result.get(i++).equals("-processorpath"));
+        assertTrue(result.get(i++).equals("/path/to/lombok.jar"));
+        assertEquals(i, result.size());
+    }
+
+    @Test
+    public void testAnnotationProcessorPathNull() throws Exception {
+        JavaCompilerOptions jco = new JavaCompilerOptions();
+        jco.setAnnotationProcessorPath(null);
+
+        List<String> result = jco.getOptions();
+        assertEquals(1, result.size());
+        assertTrue(result.get(0).equals("-nowarn"));
+    }
+
+    @Test
+    public void testAnnotationProcessorPathEmpty() throws Exception {
+        JavaCompilerOptions jco = new JavaCompilerOptions();
+        jco.setAnnotationProcessorPath("");
+
+        List<String> result = jco.getOptions();
+        assertEquals(1, result.size());
+        assertTrue(result.get(0).equals("-nowarn"));
+    }
+
 }
