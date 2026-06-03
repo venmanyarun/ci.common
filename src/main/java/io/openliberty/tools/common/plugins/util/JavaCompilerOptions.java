@@ -1,5 +1,5 @@
 /**
- * (C) Copyright IBM Corporation 2020.
+ * (C) Copyright IBM Corporation 2020, 2026.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,6 +47,16 @@ public class JavaCompilerOptions {
     private String encoding;
 
     /**
+     * Annotation processor path
+     */
+    private String annotationProcessorPath;
+
+    /**
+     * Annotation processors (comma-separated list of processor class names)
+     */
+    private String annotationProcessors;
+
+    /**
      * Get list of options that can be passed to the compiler.
      * Options with values are represented as multiple strings in the list
      *  e.g. "-source" and "1.8"
@@ -62,6 +72,8 @@ public class JavaCompilerOptions {
         addStringOption(options, "-target", target);
         addStringOption(options, "--release", release);
         addStringOption(options, "-encoding", encoding);
+        addStringOption(options, "-processorpath", annotationProcessorPath);
+        addStringOption(options, "-processor", annotationProcessors);
         return options;
     }
 
@@ -110,6 +122,22 @@ public class JavaCompilerOptions {
 
     public void setEncoding(String encoding) {
         this.encoding = encoding;
+    }
+
+    public String getAnnotationProcessorPath() {
+        return annotationProcessorPath;
+    }
+
+    public void setAnnotationProcessorPath(String annotationProcessorPath) {
+        this.annotationProcessorPath = annotationProcessorPath;
+    }
+
+    public String getAnnotationProcessors() {
+        return annotationProcessors;
+    }
+
+    public void setAnnotationProcessors(String annotationProcessors) {
+        this.annotationProcessors = annotationProcessors;
     }
 
 }
