@@ -199,4 +199,19 @@ public class JavaCompilerOptionsTest {
         assertTrue(result.contains("-nowarn"));
     }
 
+    @Test
+    public void testCompilerArgs() throws Exception {
+        JavaCompilerOptions jco = new JavaCompilerOptions();
+        List<String> args = new java.util.ArrayList<>();
+        args.add("-parameters");
+        args.add("-Xlint:unchecked");
+        jco.setCompilerArgs(args);
+
+        List<String> result = jco.getOptions();
+        assertEquals(3, result.size());
+        assertTrue(result.contains("-nowarn"));
+        assertTrue(result.contains("-parameters"));
+        assertTrue(result.contains("-Xlint:unchecked"));
+    }
+
 }
