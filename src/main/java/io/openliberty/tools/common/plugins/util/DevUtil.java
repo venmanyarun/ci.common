@@ -1678,44 +1678,39 @@ public abstract class DevUtil extends AbstractContainerSupportUtil {
      * @return the command string to use to start the container
      */
     private String[] getContainerCommand() throws IOException, PluginExecutionException {
-        // Use List<String> for building the command. This will be converted to a String[] when passed to ProcessBuilder. 
+        // Use List<String> for building the command. This will be converted to a String[] when passed to ProcessBuilder.
         // The ProcessBuilder will handle quoting of paths (for blanks) as needed for various OS.
         List<String> commandElements = new ArrayList<String>();
         commandElements.add(getContainerCommandPrefix().trim());
         commandElements.add("run");
         commandElements.add("--rm");
 
+        // Select host-side ports and hold them open for the entire command-build phase.
+        // Holding all three sockets simultaneously means a concurrent module's
+        // findAvailablePort() will see each chosen port as already bound and advance to
+        // the next one, eliminating the TOCTOU race without any shared state.
+        List<ServerSocket> heldSockets = new ArrayList<ServerSocket>();
+
         if (!skipDefaultPorts) {
-            int httpPortToUse, httpsPortToUse;
-            try {
-                httpPortToUse = findAvailablePort(LIBERTY_DEFAULT_HTTP_PORT, false);
-                httpsPortToUse = findAvailablePort(LIBERTY_DEFAULT_HTTPS_PORT, false);
-            } catch (IOException x) {
-                error("An error occurred while trying to find an available network port. Using default port numbers.", x);
-                httpPortToUse = LIBERTY_DEFAULT_HTTP_PORT;
-                httpsPortToUse = LIBERTY_DEFAULT_HTTPS_PORT;
-            }
+            int httpPortToUse = findAndHoldPort(LIBERTY_DEFAULT_HTTP_PORT, false, heldSockets);
+            int httpsPortToUse = findAndHoldPort(LIBERTY_DEFAULT_HTTPS_PORT, false, heldSockets);
             commandElements.add("-p");
             commandElements.add(httpPortToUse+":"+LIBERTY_DEFAULT_HTTP_PORT);
 
             commandElements.add("-p");
             commandElements.add(httpsPortToUse+":"+LIBERTY_DEFAULT_HTTPS_PORT);
         }
-        
+
         if (libertyDebug) {
             // map debug port
             int containerDebugPort, hostDebugPort;
-            try {
-                if (alternativeDebugPort == -1) {
-                    // it is possible another JVM has grabbed our port since dev mode last checked
-                    hostDebugPort = findAvailablePort(libertyDebugPort, true);
-                    containerDebugPort = libertyDebugPort;
-                } else {
-                    // dev mode has already selected an ephemeral port
-                    containerDebugPort = hostDebugPort = alternativeDebugPort;
-                }
-            } catch (IOException x) {
-                containerDebugPort = hostDebugPort = libertyDebugPort;
+            if (alternativeDebugPort == -1) {
+                // it is possible another JVM has grabbed our port since dev mode last checked
+                hostDebugPort = findAndHoldPort(libertyDebugPort, true, heldSockets);
+                containerDebugPort = libertyDebugPort;
+            } else {
+                // dev mode has already selected an ephemeral port
+                containerDebugPort = hostDebugPort = alternativeDebugPort;
             }
             commandElements.add("-p");
             commandElements.add(hostDebugPort+":"+containerDebugPort);
@@ -1798,7 +1793,80 @@ public abstract class DevUtil extends AbstractContainerSupportUtil {
         //return command.toString();
         String[] newCommand = commandElements.toArray(new String[commandElements.size()]);
         info("Container command: "+String.join(" ", newCommand));
+        // Release all held port sockets as late as possible so the container engine
+        // can bind those exact ports immediately after this command is issued.
+        for (ServerSocket s : heldSockets) {
+            closeQuietly(s);
+        }
         return newCommand;
+    }
+
+    /**
+     * Finds an available port starting from {@code preferred} and immediately binds a
+     * {@code ServerSocket} on it to hold that port open until the caller is done building
+     * the container command. The bound socket is added to {@code heldSockets} so the
+     * caller can release all of them in a single loop.
+     *
+     * <p>If {@code findAvailablePort} throws, the default port is returned without
+     * holding any socket (consistent with the pre-existing error-recovery behaviour).
+     *
+     * @param preferred    the preferred port number to try first
+     * @param isDebug      true if this is the debug port (affects ephemeral-port fallback)
+     * @param heldSockets  accumulator list; the new socket is appended if binding succeeds
+     * @return the selected port number
+     */
+    private int findAndHoldPort(int preferred, boolean isDebug, List<ServerSocket> heldSockets)
+            throws IOException {
+        int port;
+        try {
+            port = findAvailablePort(preferred, isDebug);
+        } catch (IOException x) {
+            error("An error occurred while trying to find an available network port. Using default port " + preferred + ".", x);
+            return preferred;
+        }
+        ServerSocket s = bindPortSocket(port);
+        if (s != null) {
+            heldSockets.add(s);
+        }
+        return port;
+    }
+
+    /**
+     * Closes a {@link ServerSocket}, logging any {@link IOException} at debug level
+     * rather than propagating it. Safe to call with a {@code null} argument.
+     */
+    private void closeQuietly(ServerSocket s) {
+        if (s != null) {
+            try {
+                s.close();
+            } catch (IOException e) {
+                debug("closeQuietly: error closing port socket: " + e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Attempts to bind the given port on the loopback interface to hold it open.
+     * Returns the bound ServerSocket, or null if binding fails (in which case the
+     * caller continues without holding a socket).
+     * <p>
+     * SO_REUSEADDR is explicitly set to false so that the OS will not allow another
+     * process to bind the same port while this socket is open.
+     */
+    private ServerSocket bindPortSocket(int port) {
+        try {
+            if (OSUtil.isWindows()) {
+                return new ServerSocket(port);
+            } else {
+                ServerSocket s = new ServerSocket();
+                s.setReuseAddress(false);
+                s.bind(new InetSocketAddress(InetAddress.getByName(null), port), 1);
+                return s;
+            }
+        } catch (IOException e) {
+            debug("bindPortSocket: could not hold port " + port + ": " + e.getMessage());
+            return null;
+        }
     }
 
     /**
@@ -1823,38 +1891,68 @@ public abstract class DevUtil extends AbstractContainerSupportUtil {
         return null;
     }
 
-    private String generateNewContainerName() throws PluginExecutionException {
+    String generateNewContainerName() throws PluginExecutionException {
+        // Build a sanitized name segment from applicationId so each module gets a stable,
+        // unique default name (e.g. "liberty-dev-moduleA") that does not depend on the
+        // order in which modules start. This eliminates the race condition that occurred
+        // when multiple modules computed the same numeric suffix from a shared container list.
+        String appSegment = sanitizeContainerNameSegment(applicationId);
+        String preferredName = DEVMODE_CONTAINER_BASE_NAME + (appSegment.isEmpty() ? "" : "-" + appSegment);
+
         String containerContNamesCmd = "ps -a --format \"{{.Names}}\"";
         debug("container names list command: " + containerContNamesCmd);
         String result = execContainerCmdWithPrefix(containerContNamesCmd, CONTAINER_TIMEOUT);
-        if (result == null) {
-            return DEVMODE_CONTAINER_BASE_NAME;
-        }
-        String[] containerNames = result.split(" ");
-        int highestNum = -1;
-        for(int i = 0; i < containerNames.length; i++) {
-            String name = removeSurroundingQuotes(containerNames[i]);
-            int num = -1;
-            if (name.equals(DEVMODE_CONTAINER_BASE_NAME)) {
-                num = 0;
-            } else if (name.startsWith(DEVMODE_CONTAINER_BASE_NAME + "-")) {
-                String[] nameSegments = name.split("-");
-                // if DEVMODE_CONTAINER_BASE_NAME changes, the logic below may need to change
-                if (nameSegments.length == 3) {
-                    String lastSegment = nameSegments[nameSegments.length - 1];
-                    try {
-                        num = Integer.parseInt(lastSegment);
-                    } catch (NumberFormatException e) {
-                        debug("Last segment of container name is not a number.");
-                    }
-                }
-            }
-            if (num > highestNum) {
-                highestNum = num;
+
+        Set<String> existingNames = new HashSet<String>();
+        if (result != null) {
+            for (String rawName : result.split(" ")) {
+                existingNames.add(removeSurroundingQuotes(rawName).trim());
             }
         }
-        
-        return DEVMODE_CONTAINER_BASE_NAME + ((highestNum != -1) ? "-" + ++highestNum : "");
+
+        if (!existingNames.contains(preferredName)) {
+            return preferredName;
+        }
+
+        // Preferred name is already in use (e.g. a second instance of the same module).
+        // Append an incrementing suffix until we find an unused name.
+        int suffix = 1;
+        String candidate;
+        do {
+            candidate = preferredName + "-" + suffix;
+            suffix++;
+        } while (existingNames.contains(candidate));
+        return candidate;
+    }
+
+    /**
+     * Sanitizes a string so it can be used as part of a container name.
+     * Container names must match [a-zA-Z0-9][a-zA-Z0-9_.-]*.
+     * Characters outside that set are replaced with hyphens, leading/trailing
+     * hyphens are removed, and the result is truncated to 63 characters so
+     * that the full "liberty-dev-&lt;segment&gt;" name stays within the 128-char limit
+     * that most container engines impose on container names.
+     *
+     * @param input the raw string to sanitize (e.g. applicationId)
+     * @return a sanitized, lower-case string suitable for use in a container name,
+     *         or an empty string if input is null or blank
+     */
+    static String sanitizeContainerNameSegment(String input) {
+        if (input == null || input.trim().isEmpty()) {
+            return "";
+        }
+        // Replace any character that is not alphanumeric, hyphen, underscore, or dot with a hyphen.
+        String sanitized = input.trim().toLowerCase().replaceAll("[^a-z0-9_.]", "-");
+        // Collapse consecutive hyphens/dots/underscores to a single hyphen.
+        sanitized = sanitized.replaceAll("[-_.]{2,}", "-");
+        // Remove leading and trailing hyphens.
+        sanitized = sanitized.replaceAll("^[-_.]+|[-_.]+$", "");
+        // Truncate to 63 characters.
+        if (sanitized.length() > 63) {
+            sanitized = sanitized.substring(0, 63);
+            sanitized = sanitized.replaceAll("[-_.]+$", "");
+        }
+        return sanitized;
     }
 
     /**
@@ -6054,7 +6152,10 @@ public abstract class DevUtil extends AbstractContainerSupportUtil {
 
     private void writeElement(XMLStreamWriter writer, String element, String optional) throws XMLStreamException {
         writer.writeStartElement(element);
-        if (optional != null) writer.writeCharacters(optional);
+        // Always write the characters (empty string when null) so the XML stream writer
+        // emits <element></element> rather than the self-closing <element/> form.
+        // The test assertions depend on the open+close form being present.
+        writer.writeCharacters(optional != null ? optional : "");
         writer.writeEndElement();
     }
 }
