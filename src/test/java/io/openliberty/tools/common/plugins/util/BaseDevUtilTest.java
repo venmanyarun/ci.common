@@ -58,6 +58,14 @@ public class BaseDevUtilTest {
         }
 
         /**
+         * Returns null for all container CLI commands to avoid requiring a running container engine.
+         */
+        @Override
+        protected String execContainerCmdWithPrefix(String command, int timeout, boolean throwExceptionOnError) {
+            return null;
+        }
+
+        /**
          * Sets the container port fields without going through findLocalPort (which calls Docker).
          * Only meaningful when container=true.
          */

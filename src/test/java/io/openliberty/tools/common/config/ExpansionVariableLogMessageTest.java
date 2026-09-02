@@ -49,7 +49,10 @@ public class ExpansionVariableLogMessageTest {
     }
 
     // server.env is placed in serverDir because SERVER_CONFIG_DIR maps there, making it visible to processServerEnv()
+    // A minimal server.xml is required so that ServerConfigDocument.<init> does not NPE when it calls parseDocument(serverXMLFile).
     private ServerConfigDocument buildDoc(CapturingLogger log, File serverDir, String serverEnvContent) throws Exception {
+        Files.write(new File(serverDir, "server.xml").toPath(),
+                "<server/>".getBytes());
         Files.write(new File(serverDir, "server.env").toPath(), serverEnvContent.getBytes());
 
         Map<String, File> dirMap = new HashMap<>();
@@ -118,11 +121,14 @@ public class ExpansionVariableLogMessageTest {
         CapturingLogger log = new CapturingLogger();
         File serverDir = tmp.newFolder("server-win");
 
-        // Reproduces the exact scenario from issue #2076
-        String envContent = "IBM_JAVA_SEMERU_HOME=C:\\MyData\\java\\ibm-semeru-certified\nJAVA_HOME=!IBM_JAVA_SEMERU_HOME!\\jdk-21.0.10+7\n";
+        // Reproduces the exact scenario from issue #2076.
+        // Backslashes must be doubled in the .properties file format so that Properties.load() preserves them as single backslashes.
+        String envContent = "IBM_JAVA_SEMERU_HOME=C:\\\\MyData\\\\java\\\\ibm-semeru-certified\nJAVA_HOME=!IBM_JAVA_SEMERU_HOME!\\\\jdk-21.0.10+7\n";
         buildDoc(log, serverDir, envContent).processServerEnv();
 
-        String expectedMsg = "Resolved environment variable \"IBM_JAVA_SEMERU_HOME\" in path \"!IBM_JAVA_SEMERU_HOME!\\jdk-21.0.10+7\" to \"C:\\MyData\\java\\ibm-semeru-certified\\jdk-21.0.10+7\"";
+        // per-var log: shows only what IBM_JAVA_SEMERU_HOME itself resolved to, not the full concatenated value
+        String expectedMsg = "Resolved environment variable \"IBM_JAVA_SEMERU_HOME\" in path \"!IBM_JAVA_SEMERU_HOME!\\jdk-21.0.10+7\" to \"C:\\MyData\\java\\ibm-semeru-certified\"";
+        // summary log: shows the full expression after all substitutions
         String expectedSummary = "Resolved path \"!IBM_JAVA_SEMERU_HOME!\\jdk-21.0.10+7\" to \"C:\\MyData\\java\\ibm-semeru-certified\\jdk-21.0.10+7\"";
         assertTrue("Log message with backslashes not found — backslashes may have been dropped.\nActual: " + log.infoMessages,
                 log.infoMessages.stream().anyMatch(m -> m.equals(expectedMsg)));
