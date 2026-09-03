@@ -1689,115 +1689,114 @@ public abstract class DevUtil extends AbstractContainerSupportUtil {
         // Holding all three sockets simultaneously means a concurrent module's
         // findAvailablePort() will see each chosen port as already bound and advance to
         // the next one, eliminating the TOCTOU race without any shared state.
+        // The try/finally below ensures all sockets are released even if an exception
+        // is thrown while building the rest of the command.
         List<ServerSocket> heldSockets = new ArrayList<ServerSocket>();
-
-        if (!skipDefaultPorts) {
-            int httpPortToUse = findAndHoldPort(LIBERTY_DEFAULT_HTTP_PORT, false, heldSockets);
-            int httpsPortToUse = findAndHoldPort(LIBERTY_DEFAULT_HTTPS_PORT, false, heldSockets);
-            commandElements.add("-p");
-            commandElements.add(httpPortToUse+":"+LIBERTY_DEFAULT_HTTP_PORT);
-
-            commandElements.add("-p");
-            commandElements.add(httpsPortToUse+":"+LIBERTY_DEFAULT_HTTPS_PORT);
-        }
-
-        if (libertyDebug) {
-            // map debug port
-            int containerDebugPort, hostDebugPort;
-            if (alternativeDebugPort == -1) {
-                // it is possible another JVM has grabbed our port since dev mode last checked
-                hostDebugPort = findAndHoldPort(libertyDebugPort, true, heldSockets);
-                containerDebugPort = libertyDebugPort;
-            } else {
-                // dev mode has already selected an ephemeral port
-                containerDebugPort = hostDebugPort = alternativeDebugPort;
-            }
-            commandElements.add("-p");
-            commandElements.add(hostDebugPort+":"+containerDebugPort);
-            // set environment variables in the container to ensure debug mode does not suspend the server, and to enable a custom debug port to be used
-            // and to allow remote debugging into the container
-            commandElements.add("-e");
-            commandElements.add("WLP_DEBUG_SUSPEND=n");
-            commandElements.add("-e");
-            commandElements.add("WLP_DEBUG_ADDRESS=" + containerDebugPort);
-            commandElements.add("-e");
-            commandElements.add("WLP_DEBUG_REMOTE=y");
-        }
-
-        // mount potential directories containing .war.xml from devc specific folder - override /config/apps and /config/dropins
-        File tempApps = new File(buildDirectory, DEVC_HIDDEN_FOLDER + "/apps");
-        File tempDropins = new File(buildDirectory, DEVC_HIDDEN_FOLDER + "/dropins");
-        commandElements.add("-v");
-        commandElements.add(tempApps + ":/config/apps");
-
-        commandElements.add("-v");
-        commandElements.add(tempDropins + ":/config/dropins");
-
-        // mount the loose application resources in the container using the appropriate project root
-        File looseApplicationProjectRoot = getLooseAppProjectRoot(projectDirectory, multiModuleProjectDirectory);
-        commandElements.add("-v");
-        commandElements.add(looseApplicationProjectRoot.getAbsolutePath() + ":" + DEVMODE_DIR_NAME);
-
-        // mount the server logs directory over the /logs used by the open liberty container as defined by the LOG_DIR env. var.
-        File logsDir = new File(serverDirectory.getAbsolutePath(), "logs");
-        commandElements.add("-v");
-        commandElements.add(logsDir + ":/logs");
-
-        // mount the Maven .m2 cache directory for featureUtility to use. For now, featureUtility does not support Gradle cache.
-        commandElements.add("-v");
-        commandElements.add(mavenCacheLocation + ":/devmode-maven-cache");
-
-        // mount all files from COPY commands in the Containerfile to allow for hot deployment
-        addCopiedFiles(commandElements);
-
-        // Add a --user option when running Linux
-        addUserId(commandElements);
-
-        // Do not generate a name if the user has specified a name
-        String name = getContainerOption("--name");
-        if (name == null || name.isEmpty()) {
-            if (name != null && name.isEmpty()) {
-                error("The container option --name is specified with an unsupported value: empty string.");
-                // now generate a name so that the container errors make some sense to the user.
-            }
-            containerName = generateNewContainerName();
-            commandElements.add("--name");
-            commandElements.add(containerName);
-        } else {
-            containerName = name;
-        }
-        debug("containerName: " + containerName + ".");
-
-        // Allow the user to add their own options to this command via a system property.
-        if (containerRunOpts != null) {
-            addContainerRunOpts(containerRunOpts, commandElements);
-        }
-
-        // Options must precede this in any order. Image name and command code follows.
-        commandElements.add(imageName);
-
-        // Command to start the server
-        commandElements.add("server");
-        if (libertyDebug) {
-            commandElements.add("debug");
-        } else {
-            commandElements.add("run");
-        }
-        commandElements.add("defaultServer");
-
-        // All the Liberty variable definitions must appear after the -- option.
-        // Important: other Liberty options must appear before --
-        commandElements.add("--");
-        commandElements.add("--"+DEVMODE_PROJECT_ROOT+"="+DEVMODE_DIR_NAME);
-
-        //return command.toString();
-        String[] newCommand = commandElements.toArray(new String[commandElements.size()]);
-        info("Container command: "+String.join(" ", newCommand));
-        // Release all held port sockets as late as possible so the container engine
-        // can bind those exact ports immediately after this command is issued.
-        // The finally block ensures sockets are released even if an exception is thrown
-        // above (e.g. from addCopiedFiles, addUserId, or addContainerRunOpts).
         try {
+            if (!skipDefaultPorts) {
+                int httpPortToUse = findAndHoldPort(LIBERTY_DEFAULT_HTTP_PORT, false, heldSockets);
+                int httpsPortToUse = findAndHoldPort(LIBERTY_DEFAULT_HTTPS_PORT, false, heldSockets);
+                commandElements.add("-p");
+                commandElements.add(httpPortToUse+":"+LIBERTY_DEFAULT_HTTP_PORT);
+
+                commandElements.add("-p");
+                commandElements.add(httpsPortToUse+":"+LIBERTY_DEFAULT_HTTPS_PORT);
+            }
+
+            if (libertyDebug) {
+                // map debug port
+                int containerDebugPort, hostDebugPort;
+                if (alternativeDebugPort == -1) {
+                    // it is possible another JVM has grabbed our port since dev mode last checked
+                    hostDebugPort = findAndHoldPort(libertyDebugPort, true, heldSockets);
+                    containerDebugPort = libertyDebugPort;
+                } else {
+                    // dev mode has already selected an ephemeral port
+                    containerDebugPort = hostDebugPort = alternativeDebugPort;
+                }
+                commandElements.add("-p");
+                commandElements.add(hostDebugPort+":"+containerDebugPort);
+                // set environment variables in the container to ensure debug mode does not suspend the server, and to enable a custom debug port to be used
+                // and to allow remote debugging into the container
+                commandElements.add("-e");
+                commandElements.add("WLP_DEBUG_SUSPEND=n");
+                commandElements.add("-e");
+                commandElements.add("WLP_DEBUG_ADDRESS=" + containerDebugPort);
+                commandElements.add("-e");
+                commandElements.add("WLP_DEBUG_REMOTE=y");
+            }
+
+            // mount potential directories containing .war.xml from devc specific folder - override /config/apps and /config/dropins
+            File tempApps = new File(buildDirectory, DEVC_HIDDEN_FOLDER + "/apps");
+            File tempDropins = new File(buildDirectory, DEVC_HIDDEN_FOLDER + "/dropins");
+            commandElements.add("-v");
+            commandElements.add(tempApps + ":/config/apps");
+
+            commandElements.add("-v");
+            commandElements.add(tempDropins + ":/config/dropins");
+
+            // mount the loose application resources in the container using the appropriate project root
+            File looseApplicationProjectRoot = getLooseAppProjectRoot(projectDirectory, multiModuleProjectDirectory);
+            commandElements.add("-v");
+            commandElements.add(looseApplicationProjectRoot.getAbsolutePath() + ":" + DEVMODE_DIR_NAME);
+
+            // mount the server logs directory over the /logs used by the open liberty container as defined by the LOG_DIR env. var.
+            File logsDir = new File(serverDirectory.getAbsolutePath(), "logs");
+            commandElements.add("-v");
+            commandElements.add(logsDir + ":/logs");
+
+            // mount the Maven .m2 cache directory for featureUtility to use. For now, featureUtility does not support Gradle cache.
+            commandElements.add("-v");
+            commandElements.add(mavenCacheLocation + ":/devmode-maven-cache");
+
+            // mount all files from COPY commands in the Containerfile to allow for hot deployment
+            addCopiedFiles(commandElements);
+
+            // Add a --user option when running Linux
+            addUserId(commandElements);
+
+            // Do not generate a name if the user has specified a name
+            String name = getContainerOption("--name");
+            if (name == null || name.isEmpty()) {
+                if (name != null && name.isEmpty()) {
+                    error("The container option --name is specified with an unsupported value: empty string.");
+                    // now generate a name so that the container errors make some sense to the user.
+                }
+                containerName = generateNewContainerName();
+                commandElements.add("--name");
+                commandElements.add(containerName);
+            } else {
+                containerName = name;
+            }
+            debug("containerName: " + containerName + ".");
+
+            // Allow the user to add their own options to this command via a system property.
+            if (containerRunOpts != null) {
+                addContainerRunOpts(containerRunOpts, commandElements);
+            }
+
+            // Options must precede this in any order. Image name and command code follows.
+            commandElements.add(imageName);
+
+            // Command to start the server
+            commandElements.add("server");
+            if (libertyDebug) {
+                commandElements.add("debug");
+            } else {
+                commandElements.add("run");
+            }
+            commandElements.add("defaultServer");
+
+            // All the Liberty variable definitions must appear after the -- option.
+            // Important: other Liberty options must appear before --
+            commandElements.add("--");
+            commandElements.add("--"+DEVMODE_PROJECT_ROOT+"="+DEVMODE_DIR_NAME);
+
+            //return command.toString();
+            String[] newCommand = commandElements.toArray(new String[commandElements.size()]);
+            info("Container command: "+String.join(" ", newCommand));
+            // Release the held port sockets as late as possible so the container engine
+            // can bind those exact ports immediately after this command is issued.
             return newCommand;
         } finally {
             for (ServerSocket s : heldSockets) {
