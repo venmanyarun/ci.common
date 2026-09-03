@@ -1853,7 +1853,7 @@ public abstract class DevUtil extends AbstractContainerSupportUtil {
      * SO_REUSEADDR is explicitly set to false so that the OS will not allow another
      * process to bind the same port while this socket is open.
      */
-    private ServerSocket bindPortSocket(int port) {
+    ServerSocket bindPortSocket(int port) {
         try {
             if (OSUtil.isWindows()) {
                 return new ServerSocket(port);

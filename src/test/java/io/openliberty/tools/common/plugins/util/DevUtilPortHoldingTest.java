@@ -21,83 +21,14 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
-import java.io.File;
 import java.io.IOException;
-import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Set;
-import java.util.concurrent.ThreadPoolExecutor;
 
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 
-public class DevUtilPortHoldingTest {
-
-    @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
-
-    private class PortTestUtil extends DevUtil {
-
-        PortTestUtil() throws IOException {
-            super(temp.newFolder(),
-                  null, null, null, null, null, null,
-                  null, false, false, false, false, false, false,
-                  "test-app", 30, 30, 5, 500,
-                  true, false, false, false,
-                  false, null, null, null, 0, false, null, false,
-                  null, null, false, null, null, null, false,
-                  null, null, null, Collections.emptyMap());
-        }
-
-        ServerSocket callBindPortSocket(int port) throws Exception {
-            Method m = DevUtil.class.getDeclaredMethod("bindPortSocket", int.class);
-            m.setAccessible(true);
-            return (ServerSocket) m.invoke(this, port);
-        }
-
-        @Override protected String execContainerCmdWithPrefix(String cmd, int t, boolean e) { return null; }
-        @Override public void debug(String msg) {}
-        @Override public void debug(String msg, Throwable e) {}
-        @Override public void debug(Throwable e) {}
-        @Override public void warn(String msg) {}
-        @Override public void info(String msg) {}
-        @Override public void error(String msg) {}
-        @Override public void error(String msg, Throwable e) {}
-        @Override public boolean isDebugEnabled() { return false; }
-        @Override public void stopServer() {}
-        @Override public io.openliberty.tools.ant.ServerTask getServerTask() { return null; }
-        @Override public boolean recompileBuildFile(File f, Set<String> c, Set<String> t, boolean g, ThreadPoolExecutor e) { return false; }
-        @Override public boolean updateArtifactPaths(ProjectModule m, boolean r, boolean g, ThreadPoolExecutor e) { return false; }
-        @Override public boolean updateArtifactPaths(File f) { return false; }
-        @Override public int countApplicationUpdatedMessages() { return 0; }
-        @Override public void runTests(boolean w, int m, ThreadPoolExecutor e, boolean a, boolean b, boolean c, File f, String s) {}
-        @Override public void installFeatures(File f, File s, boolean g) {}
-        @Override public ServerFeatureUtil getServerFeatureUtilObj() { return null; }
-        @Override public Set<String> getExistingFeatures() { return null; }
-        @Override public void updateExistingFeatures() {}
-        @Override public boolean compile(File d) { return false; }
-        @Override public void runUnitTests(File f) {}
-        @Override public void runIntegrationTests(File f) {}
-        @Override public void libertyCreate() {}
-        @Override public void libertyDeploy() {}
-        @Override public void libertyInstallFeature() {}
-        @Override public boolean libertyGenerateFeatures(Collection<String> c, boolean o) { return false; }
-        @Override public void redeployApp() {}
-        @Override public String getServerStartTimeoutExample() { return null; }
-        @Override public String getProjectName() { return null; }
-        @Override public boolean isLooseApplication() { return true; }
-        @Override public File getLooseApplicationFile() { return null; }
-        @Override public boolean compile(File d, ProjectModule p) { return false; }
-        @Override protected void updateLooseApp() {}
-        @Override protected void resourceDirectoryCreated() {}
-        @Override protected void resourceModifiedOrCreated(File f, File r, File o) {}
-        @Override protected void resourceDeleted(File f, File r, File o) {}
-    }
+public class DevUtilPortHoldingTest extends BaseDevUtilTest {
 
     private static int findFreePort() throws IOException {
         try (ServerSocket s = new ServerSocket(0)) {
@@ -108,7 +39,7 @@ public class DevUtilPortHoldingTest {
 
     @Test
     public void testFindAvailablePort_returnsFreePort() throws Exception {
-        PortTestUtil util = new PortTestUtil();
+        DevTestUtil util = getNewDevUtil(temp.newFolder(), "test-app", null);
         int freePort = findFreePort();
         int found = util.findAvailablePort(freePort, false);
         assertTrue("findAvailablePort must return a port >= 1024", found >= 1024);
@@ -116,7 +47,7 @@ public class DevUtilPortHoldingTest {
 
     @Test
     public void testBindPortSocket_succeeds_onFreePort() throws Exception {
-        PortTestUtil util = new PortTestUtil();
+        DevTestUtil util = getNewDevUtil(temp.newFolder(), "test-app", null);
         int port = findFreePort();
         ServerSocket sock = util.callBindPortSocket(port);
         try {
@@ -129,7 +60,7 @@ public class DevUtilPortHoldingTest {
 
     @Test
     public void testBindPortSocket_returnsNull_whenPortAlreadyBound() throws Exception {
-        PortTestUtil util = new PortTestUtil();
+        DevTestUtil util = getNewDevUtil(temp.newFolder(), "test-app", null);
         int port = findFreePort();
         try (ServerSocket occupier = new ServerSocket()) {
             occupier.setReuseAddress(false);
@@ -142,7 +73,7 @@ public class DevUtilPortHoldingTest {
 
     @Test
     public void testPortHeldByBindSocket_notReturnedByFindAvailablePort() throws Exception {
-        PortTestUtil util = new PortTestUtil();
+        DevTestUtil util = getNewDevUtil(temp.newFolder(), "test-app", null);
         int port = findFreePort();
         ServerSocket held = util.callBindPortSocket(port);
         assertNotNull("Pre-condition: bindPortSocket should succeed on a free port", held);
@@ -158,7 +89,7 @@ public class DevUtilPortHoldingTest {
 
     @Test
     public void testTwoSequentialFindAvailablePort_returnDifferentPorts_whenFirstIsHeld() throws Exception {
-        PortTestUtil util = new PortTestUtil();
+        DevTestUtil util = getNewDevUtil(temp.newFolder(), "test-app", null);
         int preferredPort = findFreePort();
 
         int portA = util.findAvailablePort(preferredPort, false);
