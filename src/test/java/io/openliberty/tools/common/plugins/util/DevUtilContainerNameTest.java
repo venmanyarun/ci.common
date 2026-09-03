@@ -71,9 +71,9 @@ public class DevUtilContainerNameTest extends BaseDevUtilTest {
     @Test
     public void testSanitize_truncatesLongInput() {
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 70; i++) sb.append('a');
+        for (int i = 0; i < 120; i++) sb.append('a');
         String result = DevUtil.sanitizeContainerNameSegment(sb.toString());
-        assertTrue("Sanitized segment must be <= 63 chars", result.length() <= 63);
+        assertTrue("Sanitized segment must be <= 110 chars", result.length() <= 110);
     }
 
     @Test

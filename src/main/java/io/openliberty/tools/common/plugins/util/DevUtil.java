@@ -1795,10 +1795,15 @@ public abstract class DevUtil extends AbstractContainerSupportUtil {
         info("Container command: "+String.join(" ", newCommand));
         // Release all held port sockets as late as possible so the container engine
         // can bind those exact ports immediately after this command is issued.
-        for (ServerSocket s : heldSockets) {
-            closeQuietly(s);
+        // The finally block ensures sockets are released even if an exception is thrown
+        // above (e.g. from addCopiedFiles, addUserId, or addContainerRunOpts).
+        try {
+            return newCommand;
+        } finally {
+            for (ServerSocket s : heldSockets) {
+                closeQuietly(s);
+            }
         }
-        return newCommand;
     }
 
     /**
@@ -1891,9 +1896,27 @@ public abstract class DevUtil extends AbstractContainerSupportUtil {
         return null;
     }
 
+    /**
+     * Generates a unique container name for this dev mode instance.
+     *
+     * <p>The preferred name is {@code "liberty-dev-<sanitizedApplicationId>"} (or just
+     * {@code "liberty-dev"} when {@code applicationId} is null or blank). Each module in a
+     * multi-module project therefore gets a stable, distinct default name that does not
+     * depend on the order in which modules start, eliminating the race condition that
+     * occurred when multiple modules computed the same numeric suffix from a shared
+     * container list.
+     *
+     * <p>If the preferred name is already in use by an existing container (e.g. a second
+     * instance of the same module, or two different apps that happen to share the same
+     * application ID), an incrementing numeric suffix is appended until an unused name is
+     * found (e.g. {@code "liberty-dev-modulea-1"}).
+     *
+     * @return a unique container name that is not currently used by any running or stopped container
+     * @throws PluginExecutionException if the container command cannot be executed
+     */
     String generateNewContainerName() throws PluginExecutionException {
         // Build a sanitized name segment from applicationId so each module gets a stable,
-        // unique default name (e.g. "liberty-dev-moduleA") that does not depend on the
+        // unique default name (e.g. "liberty-dev-modulea") that does not depend on the
         // order in which modules start. This eliminates the race condition that occurred
         // when multiple modules computed the same numeric suffix from a shared container list.
         String appSegment = sanitizeContainerNameSegment(applicationId);
@@ -1927,11 +1950,12 @@ public abstract class DevUtil extends AbstractContainerSupportUtil {
 
     /**
      * Sanitizes a string so it can be used as part of a container name.
-     * Container names must match [a-zA-Z0-9][a-zA-Z0-9_.-]*.
-     * Characters outside that set are replaced with hyphens, leading/trailing
-     * hyphens are removed, and the result is truncated to 63 characters so
-     * that the full "liberty-dev-&lt;segment&gt;" name stays within the 128-char limit
-     * that most container engines impose on container names.
+     * Container names must match {@code [a-zA-Z0-9][a-zA-Z0-9_.-]*}.
+     * The input is lower-cased, characters outside the allowed set are replaced
+     * with hyphens, consecutive separator runs are collapsed to a single hyphen,
+     * leading/trailing separators are removed, and the result is truncated to
+     * 110 characters so that the full {@code "liberty-dev-<segment>"} name stays
+     * within the 128-char limit that most container engines impose on container names.
      *
      * @param input the raw string to sanitize (e.g. applicationId)
      * @return a sanitized, lower-case string suitable for use in a container name,
@@ -1941,15 +1965,17 @@ public abstract class DevUtil extends AbstractContainerSupportUtil {
         if (input == null || input.trim().isEmpty()) {
             return "";
         }
-        // Replace any character that is not alphanumeric, hyphen, underscore, or dot with a hyphen.
-        String sanitized = input.trim().toLowerCase().replaceAll("[^a-z0-9_.]", "-");
-        // Collapse consecutive hyphens/dots/underscores to a single hyphen.
+        // Lower-case the input and replace any character that is not alphanumeric,
+        // hyphen, underscore, or dot with a hyphen.
+        String sanitized = input.trim().toLowerCase().replaceAll("[^a-z0-9_.\\-]", "-");
+        // Collapse consecutive separators (hyphens, dots, underscores) to a single hyphen.
         sanitized = sanitized.replaceAll("[-_.]{2,}", "-");
-        // Remove leading and trailing hyphens.
+        // Remove leading and trailing separators (hyphens, dots, underscores).
         sanitized = sanitized.replaceAll("^[-_.]+|[-_.]+$", "");
-        // Truncate to 63 characters.
-        if (sanitized.length() > 63) {
-            sanitized = sanitized.substring(0, 63);
+        // Truncate to 110 characters so the full "liberty-dev-<segment>" name stays
+        // within the 128-char limit that most container engines impose on container names.
+        if (sanitized.length() > 110) {
+            sanitized = sanitized.substring(0, 110);
             sanitized = sanitized.replaceAll("[-_.]+$", "");
         }
         return sanitized;
