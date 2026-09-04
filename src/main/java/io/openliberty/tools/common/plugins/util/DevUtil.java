@@ -1672,9 +1672,37 @@ public abstract class DevUtil extends AbstractContainerSupportUtil {
     }
 
     /**
-     * Build a container run command with all the ports and directories required to run Open Liberty 
+     * Resolves the effective Liberty HTTP or HTTPS container port by reading all
+     * paths from {@code liberty-plugin-config.xml} in {@code buildDirectory} and
+     * delegating to {@link LibertyPortResolutionUtil#resolvePort(File, String, int)}.
+     *
+     * <p>Returns {@code defaultPort} unchanged whenever:
+     * <ul>
+     *   <li>{@code buildDirectory} is null</li>
+     *   <li>{@code liberty-plugin-config.xml} is absent or unparseable</li>
+     *   <li>the {@code <httpEndpoint>} element or the requested attribute is absent</li>
+     *   <li>the resolved value is not a valid port number</li>
+     *   <li>any parse error occurs</li>
+     * </ul>
+     *
+     * @param defaultPort  the Liberty default port to fall back to (9080 or 9443)
+     * @param endpointAttr the {@code httpEndpoint} attribute to read
+     *                     ({@code "httpPort"} or {@code "httpsPort"})
+     * @return the resolved effective port, or {@code defaultPort} on any failure
+     */
+    // package-private for unit testing
+    int resolveEffectiveContainerPort(int defaultPort, String endpointAttr) {
+        if (buildDirectory == null) {
+            return defaultPort;
+        }
+        File pluginConfigXml = new File(buildDirectory, LibertyPortResolutionUtil.PLUGIN_CONFIG_XML);
+        return LibertyPortResolutionUtil.resolvePort(pluginConfigXml, endpointAttr, defaultPort);
+    }
+
+    /**
+     * Build a container run command with all the ports and directories required to run Open Liberty
      * inside a container. Also included is the image name and the server run command to override
-     * the CMD attribute of the Open Liberty docker image. 
+     * the CMD attribute of the Open Liberty docker image.
      * @return the command string to use to start the container
      */
     private String[] getContainerCommand() throws IOException, PluginExecutionException {
@@ -1694,13 +1722,17 @@ public abstract class DevUtil extends AbstractContainerSupportUtil {
         List<ServerSocket> heldSockets = new ArrayList<ServerSocket>();
         try {
             if (!skipDefaultPorts) {
-                int httpPortToUse = findAndHoldPort(LIBERTY_DEFAULT_HTTP_PORT, false, heldSockets);
-                int httpsPortToUse = findAndHoldPort(LIBERTY_DEFAULT_HTTPS_PORT, false, heldSockets);
+                // Resolve the effective container ports from server.xml / variable-config files
+                // before choosing host-side ports, so that non-default ports are published.
+                int effectiveHttpPort  = resolveEffectiveContainerPort(LIBERTY_DEFAULT_HTTP_PORT,  "httpPort");
+                int effectiveHttpsPort = resolveEffectiveContainerPort(LIBERTY_DEFAULT_HTTPS_PORT, "httpsPort");
+                int httpPortToUse  = findAndHoldPort(effectiveHttpPort,  false, heldSockets);
+                int httpsPortToUse = findAndHoldPort(effectiveHttpsPort, false, heldSockets);
                 commandElements.add("-p");
-                commandElements.add(httpPortToUse+":"+LIBERTY_DEFAULT_HTTP_PORT);
+                commandElements.add(httpPortToUse + ":" + effectiveHttpPort);
 
                 commandElements.add("-p");
-                commandElements.add(httpsPortToUse+":"+LIBERTY_DEFAULT_HTTPS_PORT);
+                commandElements.add(httpsPortToUse + ":" + effectiveHttpsPort);
             }
 
             if (libertyDebug) {
@@ -1739,6 +1771,15 @@ public abstract class DevUtil extends AbstractContainerSupportUtil {
             File looseApplicationProjectRoot = getLooseAppProjectRoot(projectDirectory, multiModuleProjectDirectory);
             commandElements.add("-v");
             commandElements.add(looseApplicationProjectRoot.getAbsolutePath() + ":" + DEVMODE_DIR_NAME);
+
+            // mount configDropins/overrides so that plugin-written variable overrides
+            // (e.g. liberty-plugin-variable-config.xml from liberty.var.* / liberty.server.var.*)
+            // are visible to Liberty inside the container and it starts on the configured port.
+            File configDropinsOverrides = new File(serverDirectory, "configDropins/overrides");
+            if (configDropinsOverrides.isDirectory()) {
+                commandElements.add("-v");
+                commandElements.add(configDropinsOverrides.getAbsolutePath() + ":/config/configDropins/overrides");
+            }
 
             // mount the server logs directory over the /logs used by the open liberty container as defined by the LOG_DIR env. var.
             File logsDir = new File(serverDirectory.getAbsolutePath(), "logs");
@@ -3806,11 +3847,13 @@ public abstract class DevUtil extends AbstractContainerSupportUtil {
      * Given the loose app file and the source directory path, return a list of
      * files that are specified in the loose app file and are in the source
      * directory and should be omitted from watching.
-     * 
+     *
      * @param looseAppFile Loose Application configuration file
      * @param srcDirectoryPath the source directory path
      * @return a list of files that should be omitted from watching as they are on
-     *         the source directory path and exist in the loose app config file
+     *         the source directory path and exist in the loose app config file;
+     *         never {@code null} — returns an empty list when the file is absent,
+     *         empty, or cannot be parsed
      */
     protected Collection<File> getOmitFilesList(File looseAppFile, String srcDirectoryPath) {
         Collection<File> omitFiles = new ArrayList<File>();
@@ -3849,7 +3892,7 @@ public abstract class DevUtil extends AbstractContainerSupportUtil {
             }
         } catch (ParserConfigurationException | SAXException | IOException e) {
             error("Unable to read loose application configuration file: " + looseAppFile.toString());
-            return null;
+            return omitFiles;
         }
         return omitFiles;
     }

@@ -19,6 +19,7 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.BufferedReader;
@@ -573,6 +574,35 @@ public class DevUtilTest extends BaseDevUtilTest {
         Collection<File> omitFiles = new ArrayList<File>();
         omitFiles.add(new File("/src/main/webapp"));
         assertEquals(omitFiles, util.getOmitFilesList(looseAppFile, new File("/src/main/webapp").getCanonicalPath()));
+    }
+
+    @Test
+    public void testOmitFilesListNullFileReturnsEmpty() throws Exception {
+        // null looseAppFile should return an empty collection, not null
+        Collection<File> result = util.getOmitFilesList(null, "/some/src/dir");
+        assertNotNull("getOmitFilesList must never return null", result);
+        assertTrue("getOmitFilesList should return empty collection for null file", result.isEmpty());
+    }
+
+    @Test
+    public void testOmitFilesListEmptyFileReturnsEmpty() throws Exception {
+        // An empty (zero-byte) loose app XML file must return an empty collection, not null
+        File emptyLooseApp = File.createTempFile("empty-loose-app", ".xml", serverDirectory);
+        // file exists but has no content — parser will throw SAXException ("Premature end of file")
+        Collection<File> result = util.getOmitFilesList(emptyLooseApp, "/some/src/dir");
+        assertNotNull("getOmitFilesList must never return null for an empty file", result);
+        assertTrue("getOmitFilesList should return empty collection for an empty/malformed file", result.isEmpty());
+        // Verify that addAll() does not throw — the NPE from the original bug would surface here
+        Collection<File> accumulator = new ArrayList<File>();
+        accumulator.addAll(result); // must not throw NullPointerException
+    }
+
+    @Test
+    public void testOmitFilesListNonExistentFileReturnsEmpty() throws Exception {
+        File nonExistent = new File(serverDirectory, "does-not-exist.ear.xml");
+        Collection<File> result = util.getOmitFilesList(nonExistent, "/some/src/dir");
+        assertNotNull("getOmitFilesList must never return null for a non-existent file", result);
+        assertTrue("getOmitFilesList should return empty collection for a non-existent file", result.isEmpty());
     }
 
     @Test
